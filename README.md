@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Shell Script](https://img.shields.io/badge/Shell-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20WSL2-blue.svg)](https://github.com/yourusername/openclaw-one-click-deploy)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20WSL2-blue.svg)](https://github.com/Davidzkeng/openclaw-one-click-deploy)
 
 **一键部署 OpenClaw AI 助手到本地环境的自动化工具**
 
@@ -48,7 +48,7 @@ OpenClaw One-Click Deploy 是一个自动化部署脚本，帮助你在本地环
 
 ```bash
 # 下载脚本
-curl -fsSL https://raw.githubusercontent.com/yourusername/openclaw-one-click-deploy/main/openclaw-deploy.sh -o openclaw-deploy.sh
+curl -fsSL https://raw.githubusercontent.com/Davidzkeng/openclaw-one-click-deploy/main/openclaw-deploy.sh -o openclaw-deploy.sh
 
 # 添加执行权限
 chmod +x openclaw-deploy.sh
@@ -61,7 +61,7 @@ chmod +x openclaw-deploy.sh
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/openclaw-one-click-deploy.git
+git clone https://github.com/Davidzkeng/openclaw-one-click-deploy.git
 
 # 进入目录
 cd openclaw-one-click-deploy
