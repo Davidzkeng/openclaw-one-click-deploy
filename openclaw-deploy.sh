@@ -437,6 +437,7 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 sass_binary_site=https://npmmirror.com/mirrors/node-sass/
 phantomjs_cdnurl=https://npmmirror.com/mirrors/phantomjs/
 chromedriver_cdnurl=https://npmmirror.com/mirrors/chromedriver/
+strict-ssl=false
 EOF
         log_success "已配置 npm 淘宝镜像"
 
@@ -445,23 +446,37 @@ EOF
 registry=https://registry.npmmirror.com
 shamefully-hoist=true
 strict-peer-dependencies=false
+auto-install-peers=true
 EOF
         log_success "已配置 pnpm 淘宝镜像"
 
-        # 修改 Dockerfile 以使用镜像源
+        # 修改 Dockerfile 以使用镜像源和禁用可选依赖
         if [ -f Dockerfile ]; then
-            # 在 COPY package.json 之后添加镜像配置
-            if ! grep -q "registry.npmmirror.com" Dockerfile; then
-                # 在 pnpm install 之前添加镜像配置
-                sed -i '/COPY package.json/a COPY .npmrc .pnpmrc ./' Dockerfile
-                sed -i '/pnpm install/i RUN pnpm config set registry https://registry.npmmirror.com' Dockerfile
-                log_success "已更新 Dockerfile 使用 npm 镜像"
+            # 备份原始 Dockerfile
+            if [ ! -f Dockerfile.backup ]; then
+                cp Dockerfile Dockerfile.backup
+                log_info "已备份原始 Dockerfile"
+            fi
+
+            # 检查是否已经修改过
+            if ! grep -q "OPENCLAW_DISABLE_CLIPBOARD" Dockerfile; then
+                # 在 FROM 后添加环境变量
+                sed -i '/^FROM node:22-bookworm$/a \\\nENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com \\\nENV npm_config_registry=https://registry.npmmirror.com \\\nENV OPENCLAW_DISABLE_CLIPBOARD=1 \\\nENV NODE_OPTIONS="--max-old-space-size=2048"' Dockerfile
+
+                # 在 COPY package.json 之后复制配置文件
+                sed -i '/COPY package.json pnpm-lock.yaml/a COPY .npmrc .pnpmrc ./' Dockerfile
+
+                # 修改 pnpm install 命令，忽略可选依赖
+                sed -i 's/pnpm install --frozen-lockfile/pnpm install --frozen-lockfile --no-optional --shamefully-hoist/' Dockerfile
+
+                log_success "已更新 Dockerfile (镜像源 + 禁用可选依赖)"
             fi
         fi
 
         # 设置环境变量
         export COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
         export npm_config_registry=https://registry.npmmirror.com
+        export OPENCLAW_DISABLE_CLIPBOARD=1
 
     else
         log_success "npm 官方源可访问，使用默认配置"
