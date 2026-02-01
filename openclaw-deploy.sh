@@ -426,10 +426,40 @@ run_docker_setup() {
 
     cd "$INSTALL_DIR"
 
+    # 检查系统内存
+    TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+    log_info "检测到系统内存: ${TOTAL_MEM}MB"
+
+    if [ "$TOTAL_MEM" -lt 4096 ]; then
+        log_warning "系统内存较低，将优化 Docker 构建参数"
+
+        # 创建或修改 docker-compose.yml 以限制构建内存
+        if [ -f docker-compose.yml ]; then
+            log_info "配置 Docker 构建参数以减少内存使用"
+
+            # 设置 Node.js 堆内存限制
+            export NODE_OPTIONS="--max-old-space-size=2048"
+
+            # 在 Dockerfile 中添加内存限制环境变量
+            if [ -f Dockerfile ]; then
+                if ! grep -q "NODE_OPTIONS" Dockerfile; then
+                    sed -i '/^FROM node/a ENV NODE_OPTIONS="--max-old-space-size=2048"' Dockerfile
+                    log_success "已添加 Node.js 内存限制到 Dockerfile"
+                fi
+            fi
+        fi
+    fi
+
     # 检查是否存在 docker-setup.sh
     if [ -f docker-setup.sh ]; then
         log_info "执行 docker-setup.sh..."
         chmod +x docker-setup.sh
+
+        # 设置构建时的环境变量
+        export DOCKER_BUILDKIT=1
+        export COMPOSE_DOCKER_CLI_BUILD=1
+        export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
+
         ./docker-setup.sh
     else
         log_warning "未找到 docker-setup.sh，跳过官方配置脚本"
@@ -448,20 +478,57 @@ start_services() {
         exit 1
     fi
 
-    log_info "构建并启动容器..."
+    # 检查系统内存并设置构建参数
+    TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+
+    # 设置 Docker 构建环境变量
+    export DOCKER_BUILDKIT=1
+    export COMPOSE_DOCKER_CLI_BUILD=1
+    export NODE_OPTIONS="--max-old-space-size=2048"
+
+    log_info "构建并启动容器（内存优化模式）..."
+    log_info "Node.js 堆内存限制: 2048MB"
+
+    # 创建 .dockerignore 以减少构建上下文
+    if [ ! -f .dockerignore ]; then
+        cat > .dockerignore << 'EOF'
+node_modules
+.git
+.github
+*.log
+.env
+.env.*
+dist
+build
+coverage
+.vscode
+.idea
+EOF
+        log_success "已创建 .dockerignore 优化构建"
+    fi
 
     # 使用 docker compose 或 docker-compose
     if docker compose version &> /dev/null; then
-        docker compose up -d --build
+        # 使用低内存模式构建
+        COMPOSE_HTTP_TIMEOUT=300 docker compose build --memory 2g || {
+            log_warning "构建失败，尝试使用预构建镜像..."
+            docker compose pull || log_error "无法拉取预构建镜像"
+        }
+        docker compose up -d
     else
-        docker-compose up -d --build
+        # 使用低内存模式构建
+        COMPOSE_HTTP_TIMEOUT=300 docker-compose build --memory 2g || {
+            log_warning "构建失败，尝试使用预构建镜像..."
+            docker-compose pull || log_error "无法拉取预构建镜像"
+        }
+        docker-compose up -d
     fi
 
     log_success "服务启动完成"
 
     # 等待服务就绪
     log_info "等待服务启动..."
-    sleep 5
+    sleep 10
 
     # 显示服务状态
     echo ""
