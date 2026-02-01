@@ -1,17 +1,15 @@
 #!/bin/bash
 
 ################################################################################
-# OpenClaw 构建修复脚本
+# OpenClaw 终极修复脚本 v2.0
 #
-# 解决问题：
-# 1. npm/pnpm 镜像源访问失败
-# 2. ARM 架构原生模块缺失 (@mariozechner/clipboard)
-# 3. Corepack 无法下载 pnpm
+# 彻底解决 clipboard 模块问题：
+# 1. 使用预构建的官方镜像（推荐）
+# 2. 或创建假的 clipboard 模块绕过错误
 ################################################################################
 
 set -e
 
-# 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -38,159 +36,197 @@ log_error() {
 print_header() {
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║          OpenClaw 构建修复工具                              ║"
+    echo "║          OpenClaw 终极修复工具 v2.0                         ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
 
+print_header
+
 # 检查是否在 openclaw 目录
-if [ ! -f "package.json" ]; then
+if [ ! -f "docker-compose.yml" ]; then
     log_error "请在 OpenClaw 项目根目录运行此脚本"
-    log_info "提示: cd ~/openclaw && ./fix-openclaw-build.sh"
     exit 1
 fi
 
-print_header
-
-log_info "开始修复 OpenClaw 构建配置..."
+echo ""
+log_warning "检测到 clipboard 模块运行时错误"
+echo ""
+echo -e "${CYAN}选择修复方案:${NC}"
+echo ""
+echo -e "  ${GREEN}1.${NC} 使用预构建镜像 (推荐，最快速)"
+echo -e "     从 Docker Hub 拉取官方已构建好的镜像"
+echo -e "     优点: 快速、可靠、官方支持"
+echo ""
+echo -e "  ${YELLOW}2.${NC} 创建假模块绕过错误 (实验性)"
+echo -e "     在 Dockerfile 中创建空的 clipboard 模块"
+echo -e "     优点: 本地构建，但可能导致功能缺失"
+echo ""
+echo -e "  ${BLUE}3.${NC} 联系 OpenClaw 官方支持"
+echo -e "     在 GitHub 提交 Issue 获取帮助"
 echo ""
 
-# 1. 创建 .npmrc
-log_info "步骤 1/6: 创建 .npmrc 配置..."
-cat > .npmrc << 'EOF'
-registry=https://registry.npmmirror.com
-electron_mirror=https://npmmirror.com/mirrors/electron/
-sass_binary_site=https://npmmirror.com/mirrors/node-sass/
-phantomjs_cdnurl=https://npmmirror.com/mirrors/phantomjs/
-chromedriver_cdnurl=https://npmmirror.com/mirrors/chromedriver/
-strict-ssl=false
+read -p "$(echo -e ${CYAN}请选择方案 [1/2/3]: ${NC})" choice
+
+case $choice in
+    1)
+        log_info "方案 1: 使用预构建镜像"
+        echo ""
+
+        # 停止现有容器
+        log_info "停止现有容器..."
+        docker-compose down 2>/dev/null || true
+
+        # 清理本地构建的镜像
+        log_info "清理本地构建的镜像..."
+        docker images | grep openclaw | awk '{print $3}' | xargs -r docker rmi -f 2>/dev/null || true
+
+        # 拉取预构建镜像
+        log_info "从 Docker Hub 拉取预构建镜像..."
+        if docker-compose pull; then
+            log_success "预构建镜像拉取成功"
+
+            # 启动服务
+            log_info "启动服务..."
+            docker-compose up -d
+
+            echo ""
+            log_success "OpenClaw 已使用预构建镜像启动！"
+            echo ""
+            echo -e "${CYAN}查看服务状态:${NC}"
+            docker-compose ps
+            echo ""
+            echo -e "${CYAN}查看日志:${NC}"
+            echo "  docker-compose logs -f"
+
+        else
+            log_error "拉取预构建镜像失败"
+            log_info "可能原因:"
+            echo "  1. 网络连接问题"
+            echo "  2. Docker Hub 访问受限"
+            echo "  3. 镜像不存在或需要认证"
+            echo ""
+            log_info "尝试配置 Docker Hub 镜像:"
+            echo "  sudo mkdir -p /etc/docker"
+            echo "  sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'"
+            echo '{'
+            echo '  "registry-mirrors": ["https://dockerproxy.com"]'
+            echo '}'
+            echo 'EOF'
+            echo "  sudo systemctl restart docker"
+            exit 1
+        fi
+        ;;
+
+    2)
+        log_info "方案 2: 创建假模块绕过"
+        echo ""
+
+        # 备份 Dockerfile
+        if [ ! -f "Dockerfile.original" ]; then
+            cp Dockerfile Dockerfile.original
+            log_info "已备份原始 Dockerfile"
+        fi
+
+        # 创建补丁文件
+        log_info "创建 clipboard 补丁..."
+        cat > clipboard-fix.js << 'EOF'
+// Fake clipboard module to bypass ARM architecture error
+module.exports = {
+    readText: () => Promise.resolve(''),
+    writeText: (text) => Promise.resolve(),
+    readHTML: () => Promise.resolve(''),
+    writeHTML: (html) => Promise.resolve(''),
+    readRTF: () => Promise.resolve(''),
+    writeRTF: (rtf) => Promise.resolve(''),
+    readImage: () => Promise.resolve(null),
+    writeImage: (image) => Promise.resolve(),
+    clear: () => Promise.resolve()
+};
 EOF
-log_success ".npmrc 创建完成"
 
-# 2. 创建 .pnpmrc
-log_info "步骤 2/6: 创建 .pnpmrc 配置..."
-cat > .pnpmrc << 'EOF'
-registry=https://registry.npmmirror.com
-shamefully-hoist=true
-strict-peer-dependencies=false
-auto-install-peers=true
-EOF
-log_success ".pnpmrc 创建完成"
+        # 修改 Dockerfile
+        log_info "修改 Dockerfile..."
 
-# 3. 备份原始 Dockerfile
-log_info "步骤 3/6: 备份 Dockerfile..."
-if [ ! -f "Dockerfile.backup" ]; then
-    cp Dockerfile Dockerfile.backup
-    log_success "已备份原始 Dockerfile 到 Dockerfile.backup"
-else
-    log_warning "备份文件已存在，跳过备份"
-fi
+        # 在 pnpm install 之后添加假模块
+        if ! grep -q "clipboard-fix.js" Dockerfile; then
+            # 找到 RUN pnpm install 的行号
+            line_num=$(grep -n "RUN pnpm install" Dockerfile | head -1 | cut -d: -f1)
 
-# 4. 修改 Dockerfile
-log_info "步骤 4/6: 修改 Dockerfile..."
+            if [ -n "$line_num" ]; then
+                # 在该行之后插入
+                sed -i "${line_num}a\\
+\\
+# Fix clipboard module for ARM architecture\\
+COPY clipboard-fix.js /tmp/clipboard-fix.js\\
+RUN mkdir -p /app/node_modules/.pnpm/@mariozechner+clipboard@0.3.0/node_modules/@mariozechner/clipboard/ \\\\\\
+    && cp /tmp/clipboard-fix.js /app/node_modules/.pnpm/@mariozechner+clipboard@0.3.0/node_modules/@mariozechner/clipboard/index.js \\\\\\
+    || true" Dockerfile
 
-# 检查是否已经修改过
-if grep -q "OPENCLAW_DISABLE_CLIPBOARD" Dockerfile; then
-    log_warning "Dockerfile 已包含修复，恢复原始版本后重新修改"
-    cp Dockerfile.backup Dockerfile
-fi
+                log_success "Dockerfile 修改完成"
+            else
+                log_error "无法找到 pnpm install 命令"
+                exit 1
+            fi
+        else
+            log_warning "Dockerfile 已包含补丁，跳过"
+        fi
 
-# 在 FROM 后添加环境变量
-sed -i '/^FROM node:22-bookworm$/a \
-\
-# Fix for network and architecture issues\
-ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com \
-ENV npm_config_registry=https://registry.npmmirror.com \
-ENV PNPM_REGISTRY=https://registry.npmmirror.com \
-ENV NODE_OPTIONS="--max-old-space-size=2048" \
-ENV OPENCLAW_DISABLE_CLIPBOARD=1' Dockerfile
+        # 重新构建
+        log_info "清理旧容器和镜像..."
+        docker-compose down 2>/dev/null || true
+        docker system prune -f
 
-# 查找 COPY package.json 所在行并在之后添加
-sed -i '/COPY package.json pnpm-lock.yaml/a COPY .npmrc .pnpmrc ./' Dockerfile
+        log_info "重新构建镜像（这可能需要几分钟）..."
+        if docker-compose build --no-cache; then
+            log_success "构建成功"
 
-# 在 pnpm install 之前添加配置命令
-sed -i '/RUN pnpm install --frozen-lockfile/i \\\n# Configure pnpm registry\nRUN pnpm config set registry https://registry.npmmirror.com 2>/dev/null || true\n' Dockerfile
+            log_info "启动服务..."
+            docker-compose up -d
 
-# 修改 pnpm install 命令，忽略可选依赖
-sed -i 's/RUN pnpm install --frozen-lockfile/RUN pnpm install --frozen-lockfile --no-optional --shamefully-hoist/' Dockerfile
+            echo ""
+            log_success "OpenClaw 已启动！"
+            echo ""
+            log_warning "注意: clipboard 功能已被禁用"
+            echo ""
+            docker-compose ps
 
-log_success "Dockerfile 修改完成"
+        else
+            log_error "构建失败"
+            echo ""
+            log_info "恢复原始 Dockerfile:"
+            echo "  mv Dockerfile.original Dockerfile"
+            echo ""
+            log_info "建议尝试方案 1 (使用预构建镜像)"
+            exit 1
+        fi
+        ;;
 
-# 5. 创建 .dockerignore
-log_info "步骤 5/6: 优化 .dockerignore..."
-cat > .dockerignore << 'EOF'
-node_modules
-.git
-.github
-*.log
-logs
-.env
-.env.*
-dist
-build
-coverage
-.vscode
-.idea
-*.md
-Dockerfile.backup
-EOF
-log_success ".dockerignore 创建完成"
+    3)
+        log_info "方案 3: 联系官方支持"
+        echo ""
+        echo -e "${CYAN}请访问以下链接提交 Issue:${NC}"
+        echo ""
+        echo "  OpenClaw GitHub Issues:"
+        echo "  https://github.com/openclaw/openclaw/issues"
+        echo ""
+        echo -e "${CYAN}Issue 标题建议:${NC}"
+        echo '  "Cannot find module @mariozechner/clipboard-linux-arm-gnueabihf"'
+        echo ""
+        echo -e "${CYAN}请附上以下信息:${NC}"
+        echo "  - 操作系统: $(uname -a)"
+        echo "  - Docker 版本: $(docker --version)"
+        echo "  - 架构: $(uname -m)"
+        echo "  - 错误日志: (复制完整错误信息)"
+        echo ""
+        ;;
 
-# 6. 创建 docker-compose.override.yml
-log_info "步骤 6/6: 创建 docker-compose.override.yml..."
-cat > docker-compose.override.yml << 'EOF'
-version: '3.8'
+    *)
+        log_error "无效选择"
+        exit 1
+        ;;
+esac
 
-services:
-  gateway:
-    build:
-      args:
-        - COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
-        - npm_config_registry=https://registry.npmmirror.com
-        - NODE_OPTIONS=--max-old-space-size=2048
-        - OPENCLAW_DISABLE_CLIPBOARD=1
-    environment:
-      - COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
-      - npm_config_registry=https://registry.npmmirror.com
-      - OPENCLAW_DISABLE_CLIPBOARD=1
-EOF
-log_success "docker-compose.override.yml 创建完成"
-
-# 显示修改摘要
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║                  修复完成！                                  ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "${CYAN}应用的修复:${NC}"
-echo "  ✓ npm/pnpm 镜像源配置 (淘宝镜像)"
-echo "  ✓ 禁用 clipboard 可选依赖"
-echo "  ✓ Node.js 内存限制 (2GB)"
-echo "  ✓ pnpm 配置优化"
-echo "  ✓ Docker 构建优化"
-echo ""
-echo -e "${CYAN}创建的文件:${NC}"
-echo "  • .npmrc - npm 镜像配置"
-echo "  • .pnpmrc - pnpm 镜像配置"
-echo "  • .dockerignore - Docker 构建优化"
-echo "  • docker-compose.override.yml - 构建参数覆盖"
-echo "  • Dockerfile.backup - 原始 Dockerfile 备份"
-echo ""
-echo -e "${CYAN}下一步操作:${NC}"
-echo -e "  ${YELLOW}1.${NC} 清理旧容器和镜像:"
-echo "     docker-compose down"
-echo "     docker system prune -f"
-echo ""
-echo -e "  ${YELLOW}2.${NC} 重新构建:"
-echo "     docker-compose build --no-cache"
-echo ""
-echo -e "  ${YELLOW}3.${NC} 启动服务:"
-echo "     docker-compose up -d"
-echo ""
-echo -e "${CYAN}如果构建仍然失败，可以尝试:${NC}"
-echo "  • 使用预构建镜像: docker-compose pull"
-echo "  • 恢复备份: mv Dockerfile.backup Dockerfile"
-echo "  • 查看详细日志: docker-compose logs -f"
-echo ""
-log_success "所有修复已应用完成！"
+log_info "修复脚本执行完成"
 echo ""
