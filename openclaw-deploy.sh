@@ -421,6 +421,53 @@ EOF
     rm -f .env.bak
 }
 
+configure_npm_mirrors() {
+    print_step "配置 npm/pnpm 镜像源"
+
+    cd "$INSTALL_DIR"
+
+    # 测试是否能访问 registry.npmjs.org
+    if ! curl -s --connect-timeout 5 https://registry.npmjs.org >/dev/null 2>&1; then
+        log_warning "无法访问 npm 官方源，配置淘宝镜像"
+
+        # 创建 .npmrc 配置文件
+        cat > .npmrc << 'EOF'
+registry=https://registry.npmmirror.com
+electron_mirror=https://npmmirror.com/mirrors/electron/
+sass_binary_site=https://npmmirror.com/mirrors/node-sass/
+phantomjs_cdnurl=https://npmmirror.com/mirrors/phantomjs/
+chromedriver_cdnurl=https://npmmirror.com/mirrors/chromedriver/
+EOF
+        log_success "已配置 npm 淘宝镜像"
+
+        # 创建 .pnpmrc 配置文件
+        cat > .pnpmrc << 'EOF'
+registry=https://registry.npmmirror.com
+shamefully-hoist=true
+strict-peer-dependencies=false
+EOF
+        log_success "已配置 pnpm 淘宝镜像"
+
+        # 修改 Dockerfile 以使用镜像源
+        if [ -f Dockerfile ]; then
+            # 在 COPY package.json 之后添加镜像配置
+            if ! grep -q "registry.npmmirror.com" Dockerfile; then
+                # 在 pnpm install 之前添加镜像配置
+                sed -i '/COPY package.json/a COPY .npmrc .pnpmrc ./' Dockerfile
+                sed -i '/pnpm install/i RUN pnpm config set registry https://registry.npmmirror.com' Dockerfile
+                log_success "已更新 Dockerfile 使用 npm 镜像"
+            fi
+        fi
+
+        # 设置环境变量
+        export COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+        export npm_config_registry=https://registry.npmmirror.com
+
+    else
+        log_success "npm 官方源可访问，使用默认配置"
+    fi
+}
+
 run_docker_setup() {
     print_step "运行 Docker 配置"
 
@@ -450,6 +497,9 @@ run_docker_setup() {
         fi
     fi
 
+    # 配置 npm 镜像源
+    configure_npm_mirrors
+
     # 检查是否存在 docker-setup.sh
     if [ -f docker-setup.sh ]; then
         log_info "执行 docker-setup.sh..."
@@ -459,6 +509,8 @@ run_docker_setup() {
         export DOCKER_BUILDKIT=1
         export COMPOSE_DOCKER_CLI_BUILD=1
         export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
+        export COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+        export npm_config_registry=https://registry.npmmirror.com
 
         ./docker-setup.sh
     else
@@ -485,9 +537,12 @@ start_services() {
     export DOCKER_BUILDKIT=1
     export COMPOSE_DOCKER_CLI_BUILD=1
     export NODE_OPTIONS="--max-old-space-size=2048"
+    export COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+    export npm_config_registry=https://registry.npmmirror.com
 
-    log_info "构建并启动容器（内存优化模式）..."
+    log_info "构建并启动容器（内存优化 + npm 镜像模式）..."
     log_info "Node.js 堆内存限制: 2048MB"
+    log_info "npm 镜像源: registry.npmmirror.com"
 
     # 创建 .dockerignore 以减少构建上下文
     if [ ! -f .dockerignore ]; then
